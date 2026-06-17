@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200">
+  <defs>
+    <style>
+      .title { font: 700 42px Arial, sans-serif; fill: #172033; }
+      .subtitle { font: 22px Arial, sans-serif; fill: #526070; }
+      .box-title { font: 700 24px Arial, sans-serif; fill: #172033; }
+      .pin { font: 19px Arial, sans-serif; fill: #263241; }
+      .label { font: 700 18px Arial, sans-serif; fill: #263241; }
+      .note { font: 18px Arial, sans-serif; fill: #526070; }
+      .small { font: 16px Arial, sans-serif; fill: #526070; }
+      .box { fill: #ffffff; stroke: #263241; stroke-width: 3; rx: 18; }
+      .device { fill: #f5f9ff; stroke: #3f6fb5; stroke-width: 3; rx: 18; }
+      .power { fill: #fff8e5; stroke: #c78b12; stroke-width: 3; rx: 18; }
+      .ground { fill: #f3f4f6; stroke: #6b7280; stroke-width: 3; rx: 18; }
+      .wire { fill: none; stroke: #263241; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      .i2c { stroke: #1f78d1; }
+      .analog { stroke: #7c3aed; }
+      .power-wire { stroke: #d97706; }
+      .ground-wire { stroke: #6b7280; }
+      .pump-wire { stroke: #dc2626; }
+      .led-red { stroke: #dc2626; }
+      .led-green { stroke: #16a34a; }
+      .led-blue { stroke: #2563eb; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263241"/>
+    </marker>
+  </defs>
+
+  <rect width="1800" height="1200" fill="#f8fafc"/>
+  <text x="70" y="80" class="title">ESP8266 Plant Watering Wiring Schema</text>
+  <text x="70" y="118" class="subtitle">Default firmware pins: OLED + ADS1115 on shared I2C, battery on A0, pump on D1, RGB status LED on D2/D7/D0.</text>
+
+  <rect x="70" y="205" width="420" height="610" class="box"/>
+  <text x="110" y="255" class="box-title">ESP8266 NodeMCU v2</text>
+  <text x="110" y="320" class="pin">D5 / GPIO14: I2C SDA</text>
+  <text x="110" y="365" class="pin">D6 / GPIO12: I2C SCL</text>
+  <text x="110" y="430" class="pin">A0: battery divider input</text>
+  <text x="110" y="495" class="pin">D1 / GPIO5: pump driver</text>
+  <text x="110" y="560" class="pin">D2 / GPIO4: RGB red</text>
+  <text x="110" y="605" class="pin">D7 / GPIO13: RGB green</text>
+  <text x="110" y="650" class="pin">D0 / GPIO16: RGB blue</text>
+  <text x="110" y="715" class="pin">3.3 V and GND</text>
+
+  <rect x="720" y="175" width="320" height="170" class="device"/>
+  <text x="760" y="230" class="box-title">SSD1306 OLED</text>
+  <text x="760" y="272" class="pin">Address: 0x3C</text>
+  <text x="760" y="310" class="pin">SDA, SCL, VCC, GND</text>
+
+  <rect x="720" y="415" width="320" height="205" class="device"/>
+  <text x="760" y="470" class="box-title">ADS1115 ADC</text>
+  <text x="760" y="512" class="pin">Address: 0x48</text>
+  <text x="760" y="550" class="pin">SDA, SCL, VDD, GND</text>
+  <text x="760" y="588" class="pin">A0 reads soil sensor</text>
+
+  <rect x="1220" y="430" width="350" height="175" class="device"/>
+  <text x="1260" y="485" class="box-title">Capacitive Soil Sensor</text>
+  <text x="1260" y="528" class="pin">AOUT -&gt; ADS1115 A0</text>
+  <text x="1260" y="566" class="pin">VCC -&gt; 3.3 V, GND</text>
+
+  <rect x="720" y="720" width="320" height="175" class="device"/>
+  <text x="760" y="775" class="box-title">Battery Divider</text>
+  <text x="760" y="818" class="pin">Scaled output -> A0</text>
+  <text x="760" y="856" class="pin">Calibrate before relying on cutoff</text>
+
+  <rect x="1220" y="720" width="350" height="175" class="power"/>
+  <text x="1260" y="775" class="box-title">Battery</text>
+  <text x="1260" y="818" class="pin">Use safe divider for ESP8266 A0</text>
+  <text x="1260" y="856" class="pin">Common ground required</text>
+
+  <rect x="720" y="970" width="320" height="145" class="device"/>
+  <text x="760" y="1025" class="box-title">Pump Driver</text>
+  <text x="760" y="1068" class="pin">MOSFET or relay module</text>
+
+  <rect x="1220" y="970" width="350" height="145" class="power"/>
+  <text x="1260" y="1025" class="box-title">Water Pump</text>
+  <text x="1260" y="1068" class="pin">External pump supply</text>
+
+  <rect x="1220" y="175" width="350" height="170" class="device"/>
+  <text x="1260" y="230" class="box-title">RGB Status LED</text>
+  <text x="1260" y="272" class="pin">Use one resistor per color</text>
+  <text x="1260" y="310" class="pin">Set LED_COMMON_ANODE if needed</text>
+
+  <rect x="70" y="930" width="420" height="185" class="ground"/>
+  <text x="110" y="985" class="box-title">Common Ground</text>
+  <text x="110" y="1028" class="pin">ESP8266, OLED, ADS1115, soil sensor,</text>
+  <text x="110" y="1065" class="pin">battery divider, pump driver, and pump</text>
+  <text x="110" y="1102" class="pin">supply ground must be connected.</text>
+
+  <path class="wire i2c" d="M490 320 C590 320 615 235 720 235"/>
+  <text x="520" y="276" class="label">SDA D5 / GPIO14</text>
+  <path class="wire i2c" d="M490 365 C595 365 620 295 720 295"/>
+  <text x="520" y="346" class="label">SCL D6 / GPIO12</text>
+  <path class="wire i2c" d="M490 320 C590 320 615 485 720 485"/>
+  <path class="wire i2c" d="M490 365 C595 365 620 545 720 545"/>
+  <text x="535" y="455" class="label">same I2C bus</text>
+
+  <path class="wire analog" d="M1040 535 C1115 535 1140 518 1220 518" marker-end="url(#arrow)"/>
+  <text x="1060" y="500" class="label">ADS A0 &lt;- AOUT</text>
+
+  <path class="wire analog" d="M490 430 C585 430 610 808 720 808" marker-end="url(#arrow)"/>
+  <text x="520" y="735" class="label">A0 scaled voltage</text>
+  <path class="wire power-wire" d="M1220 805 C1135 805 1115 805 1040 805"/>
+  <text x="1080" y="782" class="label">battery input</text>
+
+  <path class="wire pump-wire" d="M490 495 C600 495 600 1038 720 1038" marker-end="url(#arrow)"/>
+  <text x="535" y="986" class="label">D1 / GPIO5</text>
+  <path class="wire pump-wire" d="M1040 1042 L1220 1042" marker-end="url(#arrow)"/>
+  <text x="1085" y="1015" class="label">switched pump power</text>
+
+  <path class="wire led-red" d="M490 560 C700 560 980 225 1220 225"/>
+  <path class="wire led-green" d="M490 605 C725 605 990 270 1220 270"/>
+  <path class="wire led-blue" d="M490 650 C745 650 1000 315 1220 315"/>
+  <text x="1030" y="198" class="label">D2 red</text>
+  <text x="1030" y="254" class="label">D7 green</text>
+  <text x="1030" y="310" class="label">D0 blue</text>
+
+  <path class="wire power-wire" d="M490 715 C590 715 610 325 720 325"/>
+  <path class="wire power-wire" d="M490 715 C590 715 610 580 720 580"/>
+  <path class="wire power-wire" d="M1040 560 C1120 560 1140 560 1220 560"/>
+  <text x="545" y="690" class="label">3.3 V</text>
+
+  <path class="wire ground-wire" d="M490 1015 C600 1015 610 325 720 325"/>
+  <path class="wire ground-wire" d="M490 1025 C600 1025 610 585 720 585"/>
+  <path class="wire ground-wire" d="M490 1035 C600 1035 610 865 720 865"/>
+  <path class="wire ground-wire" d="M490 1045 C610 1045 620 1075 720 1075"/>
+  <path class="wire ground-wire" d="M1040 585 C1120 585 1140 585 1220 585"/>
+  <path class="wire ground-wire" d="M1040 1080 C1120 1080 1140 1080 1220 1080"/>
+
+  <text x="70" y="1160" class="note">Important: never drive the pump directly from an ESP8266 pin. Use a driver, flyback diode for DC motor pumps, and a correctly rated pump supply.</text>
+</svg>

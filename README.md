@@ -15,8 +15,9 @@ Automatic plant watering firmware for an ESP8266 with:
 The ESP8266 has one analog input. This project reserves `A0` for battery
 monitoring and reads the analog soil sensor through an ADS1115.
 
-See the rendered [wiring schema](docs/wiring-schema.md) for the full
-connection diagram.
+See the rendered [wiring schema](docs/wiring-schema.md) and PNG diagram:
+
+![ESP8266 plant watering wiring schema](docs/wiring-schema.png)
 
 | Device | Connection | ESP8266 |
 |--------|------------|---------|
