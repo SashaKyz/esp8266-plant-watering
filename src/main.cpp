@@ -104,6 +104,15 @@ String formattedDuration(uint32_t durationMs) {
   return String(buffer);
 }
 
+String formattedHoursMinutes(uint32_t durationMs) {
+  const uint32_t totalMinutes = (durationMs + 59999U) / 60000U;
+  char buffer[16];
+  snprintf(buffer, sizeof(buffer), "%luh %02lum",
+           static_cast<unsigned long>(totalMinutes / 60U),
+           static_cast<unsigned long>(totalMinutes % 60U));
+  return String(buffer);
+}
+
 uint32_t pumpElapsedMs(uint32_t now) {
   return pumpRunning ? static_cast<uint32_t>(now - pumpStartedAt) : 0;
 }
@@ -609,10 +618,10 @@ void updateDisplay(uint32_t now) {
     const uint32_t cooldown = cooldownRemainingMs(now);
     if (scheduleFallbackActive()) {
       display.print(F("Next "));
-      display.println(formattedDuration(scheduled));
+      display.println(formattedHoursMinutes(scheduled));
     } else if (cooldown > 0) {
       display.print(F("Soak "));
-      display.println(formattedDuration(cooldown));
+      display.println(formattedHoursMinutes(cooldown));
     } else {
       display.println(F("Ready"));
     }

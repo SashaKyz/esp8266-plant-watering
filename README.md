@@ -15,8 +15,11 @@ Automatic plant watering firmware for an ESP8266 with:
 The ESP8266 has one analog input. This project reserves `A0` for battery
 monitoring and reads the analog soil sensor through an ADS1115.
 
+See the rendered [wiring schema](docs/wiring-schema.md) for the full
+connection diagram.
+
 | Device | Connection | ESP8266 |
-|---|---|---|
+|--------|------------|---------|
 | SSD1306 | SDA | D5 / GPIO14 |
 | SSD1306 | SCL | D6 / GPIO12 |
 | ADS1115 | SDA | D5 / GPIO14 |
@@ -96,6 +99,7 @@ Important values in `include/config.h`:
 
 Every pump run stops after `PUMP_RUN_MS`. OLED, web, and serial output show
 the active mode, run count, elapsed time, total duration, and time remaining.
+The OLED shows schedule and cooldown countdowns in hours and minutes.
 
 Fallback scheduling is based on uptime. Its countdown and the watering run
 counter restart when the controller reboots.
