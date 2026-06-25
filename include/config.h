@@ -7,6 +7,30 @@
 constexpr char AP_PASSWORD[] = "waterplant";
 constexpr char HOSTNAME[] = "plant-water";
 
+// Server sync identity and defaults. Override these macros in secrets.h for a
+// real deployment; sync remains disabled unless SERVER_SYNC_ENABLED is true.
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "0.1.0"
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID "plant-water-01"
+#endif
+#ifndef SERVER_BASE_URL
+#define SERVER_BASE_URL ""
+#endif
+#ifndef SERVER_API_TOKEN
+#define SERVER_API_TOKEN ""
+#endif
+#ifndef SERVER_SYNC_ENABLED
+#define SERVER_SYNC_ENABLED false
+#endif
+#ifndef SERVER_SYNC_INTERVAL_MS
+#define SERVER_SYNC_INTERVAL_MS (10UL * 60UL * 1000UL)
+#endif
+#ifndef SERVER_HTTP_TIMEOUT_MS
+#define SERVER_HTTP_TIMEOUT_MS 8000
+#endif
+
 // NTP and local timezone. This default observes US Eastern EST/EDT.
 constexpr char TIMEZONE[] = "EST5EDT,M3.2.0,M11.1.0";
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
@@ -48,13 +72,17 @@ constexpr uint8_t SOIL_DRY_CONFIRMATION_SAMPLES = 3;
 // A bare ESP8266 ADC accepts only 1.0 V. Verify your exact board and divider.
 // Divider ratio = (top resistor + bottom resistor) / bottom resistor.
 constexpr float BATTERY_ADC_FULL_SCALE_V = 3.30f;
-constexpr float BATTERY_DIVIDER_RATIO = 2.00f;
+// Installed divider: 47 kOhm from battery+ to A0 and 100 kOhm from A0 to GND.
+constexpr float BATTERY_DIVIDER_RATIO = 1.47f;
 constexpr float BATTERY_EMPTY_V = 3.20f;
 constexpr float BATTERY_FULL_V = 4.20f;
 constexpr float BATTERY_PUMP_CUTOFF_V = 3.30f;
 
 // Watering behavior.
-constexpr uint32_t PUMP_RUN_MS = 5UL * 60UL * 1000UL;
+constexpr uint32_t STARTUP_PUMP_HOLD_MS = 2UL * 60UL * 1000UL;
+constexpr uint32_t PUMP_RUN_DEFAULT_MS = 30UL * 1000UL;
+constexpr uint32_t PUMP_RUN_MIN_MS = 5UL * 1000UL;
+constexpr uint32_t PUMP_RUN_MAX_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t WATERING_COOLDOWN_MS = 30UL * 60UL * 1000UL;
 constexpr bool AUTOMATIC_WATERING_ENABLED = true;
 
@@ -67,6 +95,22 @@ constexpr uint32_t SENSORLESS_WATERING_INTERVAL_MS =
     12UL * 60UL * 60UL * 1000UL;
 
 // Update rates.
-constexpr uint32_t SENSOR_INTERVAL_MS = 2000;
+constexpr uint32_t SENSOR_INTERVAL_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t DISPLAY_INTERVAL_MS = 250;
+constexpr uint32_t OLED_IDLE_TIMEOUT_MS = 60UL * 1000UL;
+constexpr uint32_t PERSISTENT_STATE_SAVE_INTERVAL_MS = 60UL * 1000UL;
 constexpr uint32_t SERIAL_INTERVAL_MS = 5000;
+
+// Periodically turn Wi-Fi off to reduce battery use. Sensors, pump control,
+// OLED, and serial continue working while Wi-Fi is off. Web, OTA, and
+// Prometheus are available only during the Wi-Fi-on window.
+constexpr bool PERIODIC_WIFI_SLEEP_ENABLED = true;
+constexpr uint32_t WIFI_ON_WINDOW_MS = 2UL * 60UL * 1000UL;
+constexpr uint32_t WIFI_OFF_WINDOW_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20UL * 1000UL;
+
+// Requires a physical D0/GPIO16-to-RST wire. D0 cannot also drive the blue
+// LED. HTTP endpoints are available only during the awake window.
+constexpr bool DEEP_SLEEP_ENABLED = false;
+constexpr uint32_t AWAKE_WINDOW_MS = 60UL * 1000UL;
+constexpr uint64_t DEEP_SLEEP_DURATION_US = 10ULL * 60ULL * 1000000ULL;
