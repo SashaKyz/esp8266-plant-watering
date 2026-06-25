@@ -17,6 +17,8 @@
 
 namespace {
 
+bool serverSyncConfigured();
+
 ESP8266WebServer server(80);
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 Adafruit_ADS1115 ads;
@@ -54,6 +56,7 @@ bool wokeFromDeepSleep = false;
 bool wifiSleeping = false;
 bool wifiWasConnected = false;
 bool serverSyncDue = false;
+bool serverSyncSucceededThisWifiSession = false;
 uint8_t drySampleCount = 0;
 uint8_t activeOledAddress = 0;
 PumpSource lastPumpSource = PumpSource::Soil;
@@ -73,11 +76,15 @@ uint32_t pauseDurationMs = 0;
 uint32_t lastPersistentSaveAt = 0;
 uint32_t wifiModeChangedAt = 0;
 uint32_t lastServerSyncAt = 0;
+uint32_t lastSuccessfulServerSyncAt = 0;
+uint32_t nextServerSyncRetryAt = 0;
+uint32_t nextWifiConnectRetryAt = 0;
 uint32_t serverConfigVersion = 0;
 uint32_t activeWateringCooldownMs = WATERING_COOLDOWN_MS;
 uint32_t activeSensorIntervalMs = SENSOR_INTERVAL_MS;
 uint32_t activeWifiOnWindowMs = WIFI_ON_WINDOW_MS;
 uint32_t activeWifiOffWindowMs = WIFI_OFF_WINDOW_MS;
+uint32_t activeOledIdleTimeoutMs = OLED_IDLE_TIMEOUT_MS;
 time_t wateringPausedUntil = 0;
 time_t lastPumpStoppedAtEpoch = 0;
 int lastServerTelemetryStatus = 0;
@@ -107,6 +114,7 @@ struct LegacyPersistentSettings {
 
 constexpr uint32_t PERSISTENT_STATE_MAGIC = 0x50575332;
 constexpr uint32_t PERSISTENT_STATE_V3_MAGIC = 0x50575333;
+constexpr uint32_t PERSISTENT_STATE_V4_MAGIC = 0x50575334;
 constexpr size_t EEPROM_SIZE = 64;
 struct PersistentState {
   uint32_t magic;
@@ -133,6 +141,23 @@ struct PersistentStateV3 {
   uint32_t checksum;
 };
 
+struct PersistentStateV4 {
+  uint32_t magic;
+  uint32_t pumpRunMs;
+  uint32_t wateringPausedUntilEpoch;
+  uint32_t lastPumpStoppedEpoch;
+  uint32_t wateringRunCount;
+  uint32_t serverConfigVersion;
+  uint32_t soilStartWateringPercent;
+  uint32_t wateringCooldownMs;
+  uint32_t sensorIntervalMs;
+  uint32_t wifiOnWindowMs;
+  uint32_t wifiOffWindowMs;
+  uint32_t oledIdleTimeoutMs;
+  uint32_t automaticWateringEnabled;
+  uint32_t checksum;
+};
+
 String systemMessage = "Starting";
 
 template <typename T>
@@ -142,6 +167,18 @@ T clampValue(T value, T minimum, T maximum) {
 
 bool intervalElapsed(uint32_t now, uint32_t previous, uint32_t interval) {
   return static_cast<uint32_t>(now - previous) >= interval;
+}
+
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
+}
+
+uint32_t randomRetryDelayMs() {
+  const uint32_t minimum = SERVER_SYNC_RETRY_MIN_MS;
+  const uint32_t maximum = SERVER_SYNC_RETRY_MAX_MS < minimum
+      ? minimum
+      : SERVER_SYNC_RETRY_MAX_MS;
+  return static_cast<uint32_t>(random(minimum, maximum + 1UL));
 }
 
 void wakeDisplay(uint32_t now) {
@@ -203,7 +240,7 @@ String formattedOledDateTime() {
   struct tm localTime;
   localtime_r(&now, &localTime);
   char buffer[20];
-  strftime(buffer, sizeof(buffer), "%m-%d %H:%M:%S", &localTime);
+  strftime(buffer, sizeof(buffer), "%m-%d %H:%M", &localTime);
   return String(buffer);
 }
 
@@ -223,6 +260,17 @@ String formattedHoursMinutes(uint32_t durationMs) {
            static_cast<unsigned long>(totalMinutes / 60U),
            static_cast<unsigned long>(totalMinutes % 60U));
   return String(buffer);
+}
+
+String formattedServerSyncAge(uint32_t now) {
+  if (!serverSyncConfigured()) {
+    return F("off");
+  }
+  if (lastSuccessfulServerSyncAt == 0) {
+    return F("never");
+  }
+  return formattedHoursMinutes(
+      static_cast<uint32_t>(now - lastSuccessfulServerSyncAt));
 }
 
 uint32_t pumpElapsedMs(uint32_t now) {
@@ -299,9 +347,18 @@ uint32_t persistentStateV3Checksum(const PersistentStateV3& state) {
       state.automaticWateringEnabled ^ 0x33A55A33;
 }
 
+uint32_t persistentStateV4Checksum(const PersistentStateV4& state) {
+  return state.magic ^ state.pumpRunMs ^ state.wateringPausedUntilEpoch ^
+      state.lastPumpStoppedEpoch ^ state.wateringRunCount ^
+      state.serverConfigVersion ^ state.soilStartWateringPercent ^
+      state.wateringCooldownMs ^ state.sensorIntervalMs ^
+      state.wifiOnWindowMs ^ state.wifiOffWindowMs ^
+      state.oledIdleTimeoutMs ^ state.automaticWateringEnabled ^ 0x34A55A34;
+}
+
 void savePersistentState() {
-  PersistentStateV3 state = {
-      PERSISTENT_STATE_V3_MAGIC,
+  PersistentStateV4 state = {
+      PERSISTENT_STATE_V4_MAGIC,
       pumpRunMs,
       static_cast<uint32_t>(wateringPausedUntil),
       static_cast<uint32_t>(lastPumpStoppedAtEpoch),
@@ -312,9 +369,10 @@ void savePersistentState() {
       activeSensorIntervalMs,
       activeWifiOnWindowMs,
       activeWifiOffWindowMs,
+      activeOledIdleTimeoutMs,
       activeAutomaticWateringEnabled ? 1U : 0U,
       0};
-  state.checksum = persistentStateV3Checksum(state);
+  state.checksum = persistentStateV4Checksum(state);
   EEPROM.put(0, state);
   EEPROM.commit();
   lastPersistentSaveAt = millis();
@@ -322,6 +380,36 @@ void savePersistentState() {
 
 void loadPersistentState() {
   EEPROM.begin(EEPROM_SIZE);
+  PersistentStateV4 stateV4 = {};
+  EEPROM.get(0, stateV4);
+  if (stateV4.magic == PERSISTENT_STATE_V4_MAGIC &&
+      stateV4.checksum == persistentStateV4Checksum(stateV4)) {
+    if (stateV4.pumpRunMs >= PUMP_RUN_MIN_MS &&
+        stateV4.pumpRunMs <= PUMP_RUN_MAX_MS) {
+      pumpRunMs = stateV4.pumpRunMs;
+    }
+    wateringPausedUntil = static_cast<time_t>(stateV4.wateringPausedUntilEpoch);
+    lastPumpStoppedAtEpoch = static_cast<time_t>(stateV4.lastPumpStoppedEpoch);
+    hasCompletedWatering = lastPumpStoppedAtEpoch > 0;
+    wateringRunCount = stateV4.wateringRunCount;
+    serverConfigVersion = stateV4.serverConfigVersion;
+    activeSoilStartWateringPercent = static_cast<uint8_t>(
+        clampValue<uint32_t>(stateV4.soilStartWateringPercent, 0, 100));
+    activeWateringCooldownMs = stateV4.wateringCooldownMs;
+    activeSensorIntervalMs = stateV4.sensorIntervalMs < 1000UL
+        ? SENSOR_INTERVAL_MS
+        : stateV4.sensorIntervalMs;
+    activeWifiOnWindowMs = stateV4.wifiOnWindowMs < 1000UL
+        ? WIFI_ON_WINDOW_MS
+        : stateV4.wifiOnWindowMs;
+    activeWifiOffWindowMs = stateV4.wifiOffWindowMs < 1000UL
+        ? WIFI_OFF_WINDOW_MS
+        : stateV4.wifiOffWindowMs;
+    activeOledIdleTimeoutMs = stateV4.oledIdleTimeoutMs;
+    activeAutomaticWateringEnabled = stateV4.automaticWateringEnabled != 0;
+    return;
+  }
+
   PersistentStateV3 stateV3 = {};
   EEPROM.get(0, stateV3);
   if (stateV3.magic == PERSISTENT_STATE_V3_MAGIC &&
@@ -347,6 +435,7 @@ void loadPersistentState() {
     activeWifiOffWindowMs = stateV3.wifiOffWindowMs < 1000UL
         ? WIFI_OFF_WINDOW_MS
         : stateV3.wifiOffWindowMs;
+    activeOledIdleTimeoutMs = OLED_IDLE_TIMEOUT_MS;
     activeAutomaticWateringEnabled = stateV3.automaticWateringEnabled != 0;
     return;
   }
@@ -922,6 +1011,7 @@ void sleepWifi(uint32_t now) {
   delay(1);
   wifiSleeping = true;
   wifiWasConnected = false;
+  serverSyncSucceededThisWifiSession = false;
   wifiModeChangedAt = now;
   systemMessage = "Wi-Fi sleeping to save battery";
   Serial.println(F("[WIFI] Sleeping"));
@@ -939,6 +1029,9 @@ void wakeWifi(uint32_t now) {
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   wifiSleeping = false;
+  serverSyncSucceededThisWifiSession = !serverSyncConfigured();
+  nextWifiConnectRetryAt = now + randomRetryDelayMs();
+  nextServerSyncRetryAt = now;
   wifiModeChangedAt = now;
   systemMessage = "Wi-Fi waking";
   Serial.printf("[WIFI] Waking, connecting to %s\n", WIFI_SSID);
@@ -961,6 +1054,8 @@ void updateWifiPower(uint32_t now) {
   if (connected && !wifiWasConnected) {
     wifiWasConnected = true;
     wifiModeChangedAt = now;
+    serverSyncSucceededThisWifiSession = !serverSyncConfigured();
+    nextServerSyncRetryAt = now;
     configTime(TIMEZONE, NTP_SERVER_1, NTP_SERVER_2);
     if (MDNS.begin(HOSTNAME)) {
       MDNS.addService("http", "tcp", 80);
@@ -972,6 +1067,26 @@ void updateWifiPower(uint32_t now) {
                   WiFi.localIP().toString().c_str());
   } else if (!connected && wifiWasConnected) {
     wifiWasConnected = false;
+  }
+
+  if (!connected && serverSyncConfigured() &&
+      !serverSyncSucceededThisWifiSession) {
+    if (deadlineReached(now, nextWifiConnectRetryAt)) {
+      WiFi.disconnect();
+      WiFi.mode(WIFI_STA);
+      WiFi.hostname(HOSTNAME);
+      WiFi.setAutoReconnect(true);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      nextWifiConnectRetryAt = now + randomRetryDelayMs();
+      systemMessage = "Retrying Wi-Fi for server sync";
+      Serial.println(F("[WIFI] Retrying Wi-Fi connection for server sync"));
+    }
+    return;
+  }
+
+  if (connected && serverSyncConfigured() &&
+      !serverSyncSucceededThisWifiSession) {
+    return;
   }
 
   const uint32_t window = connected ? activeWifiOnWindowMs
@@ -1041,14 +1156,14 @@ String telemetryJson(uint32_t now) {
   return json;
 }
 
-void postTelemetryToServer(uint32_t now) {
+bool postTelemetryToServer(uint32_t now) {
   WiFiClient client;
   HTTPClient http;
   const String url = serverUrl(F("/api/devices/{deviceId}/telemetry"));
   if (!http.begin(client, url)) {
     lastServerTelemetryStatus = -1;
     lastServerSyncMessage = "Telemetry begin failed";
-    return;
+    return false;
   }
   http.setTimeout(SERVER_HTTP_TIMEOUT_MS);
   addServerHeaders(http);
@@ -1059,6 +1174,7 @@ void postTelemetryToServer(uint32_t now) {
       : "Telemetry POST failed " + String(lastServerTelemetryStatus);
   http.end();
   yield();
+  return lastServerTelemetryStatus >= 200 && lastServerTelemetryStatus < 300;
 }
 
 bool applyServerConfig(const String& body) {
@@ -1089,6 +1205,9 @@ bool applyServerConfig(const String& body) {
   if (jsonUInt(body, F("wifiOffWindowMs"), value) && value >= 1000UL) {
     activeWifiOffWindowMs = value;
   }
+  if (jsonUInt(body, F("oledOnDurationMs"), value)) {
+    activeOledIdleTimeoutMs = value;
+  }
   bool boolValue = false;
   if (jsonBool(body, F("automaticWateringEnabled"), boolValue)) {
     activeAutomaticWateringEnabled = boolValue;
@@ -1115,14 +1234,14 @@ bool applyServerConfig(const String& body) {
   return true;
 }
 
-void pullConfigFromServer() {
+bool pullConfigFromServer() {
   WiFiClient client;
   HTTPClient http;
   const String url = serverUrl(F("/api/devices/{deviceId}/config"));
   if (!http.begin(client, url)) {
     lastServerConfigStatus = -1;
     lastServerSyncMessage = "Config begin failed";
-    return;
+    return false;
   }
   http.setTimeout(SERVER_HTTP_TIMEOUT_MS);
   addServerHeaders(http);
@@ -1138,16 +1257,17 @@ void pullConfigFromServer() {
   }
   http.end();
   yield();
+  return lastServerConfigStatus == HTTP_CODE_OK;
 }
 
-void checkOtaManifestFromServer() {
+bool checkOtaManifestFromServer() {
   WiFiClient client;
   HTTPClient http;
   const String url = serverUrl(F("/api/devices/{deviceId}/ota"));
   if (!http.begin(client, url)) {
     lastServerOtaStatus = -1;
     lastServerSyncMessage = "OTA begin failed";
-    return;
+    return false;
   }
   http.setTimeout(SERVER_HTTP_TIMEOUT_MS);
   addServerHeaders(http);
@@ -1177,31 +1297,62 @@ void checkOtaManifestFromServer() {
   }
   http.end();
   yield();
+  return lastServerOtaStatus == HTTP_CODE_OK;
 }
 
-void syncWithServer(uint32_t now, bool force = false) {
+void scheduleServerSyncRetry(uint32_t now) {
+  const uint32_t delayMs = randomRetryDelayMs();
+  nextServerSyncRetryAt = now + delayMs;
+  serverSyncDue = false;
+  systemMessage = "Server retry in " + formattedDuration(delayMs);
+  Serial.printf("[SERVER] Sync failed; retry in %lu ms\n",
+                static_cast<unsigned long>(delayMs));
+}
+
+bool syncWithServer(uint32_t now, bool force = false) {
   if (!serverSyncConfigured()) {
     lastServerSyncMessage = "Server sync disabled";
-    return;
+    serverSyncSucceededThisWifiSession = true;
+    return false;
   }
   if (wifiSleeping || apMode || WiFi.status() != WL_CONNECTED) {
-    return;
+    return false;
   }
   if (pumpRunning || otaInProgress || otaRebootPending) {
-    return;
+    return false;
   }
   if (!force &&
       !intervalElapsed(now, lastServerSyncAt, SERVER_SYNC_INTERVAL_MS)) {
-    return;
+    return false;
   }
   lastServerSyncAt = now;
-  postTelemetryToServer(now);
+  bool configOk = false;
+  bool otaOk = false;
+  bool telemetryOk = false;
   if (!pumpRunning && !otaInProgress && !otaRebootPending) {
-    pullConfigFromServer();
+    configOk = pullConfigFromServer();
   }
   if (!pumpRunning && !otaInProgress && !otaRebootPending) {
-    checkOtaManifestFromServer();
+    otaOk = checkOtaManifestFromServer();
   }
+  if (!pumpRunning && !otaInProgress && !otaRebootPending) {
+    telemetryOk = postTelemetryToServer(millis());
+  }
+  const bool success = configOk && otaOk && telemetryOk;
+  if (!success) {
+    serverSyncSucceededThisWifiSession = false;
+    scheduleServerSyncRetry(millis());
+    return false;
+  }
+
+  serverSyncSucceededThisWifiSession = true;
+  lastSuccessfulServerSyncAt = millis();
+  lastServerSyncMessage = "Server sync complete";
+  if (PERIODIC_WIFI_SLEEP_ENABLED && !pumpRunning && !otaInProgress &&
+      !otaRebootPending && !apMode && !wifiSleeping) {
+    sleepWifi(millis());
+  }
+  return true;
 }
 
 String statusJson() {
@@ -1223,6 +1374,12 @@ String statusJson() {
   json += wifiNextTransitionMs(now);
   json += F(",\"serverSyncEnabled\":");
   json += serverSyncConfigured() ? F("true") : F("false");
+  json += F(",\"serverSyncSucceededThisWifiSession\":");
+  json += serverSyncSucceededThisWifiSession ? F("true") : F("false");
+  json += F(",\"serverSyncRetryInMs\":");
+  json += deadlineReached(now, nextServerSyncRetryAt)
+      ? 0
+      : static_cast<uint32_t>(nextServerSyncRetryAt - now);
   json += F(",\"lastServerTelemetryStatus\":");
   json += lastServerTelemetryStatus;
   json += F(",\"lastServerConfigStatus\":");
@@ -1273,6 +1430,8 @@ String statusJson() {
   json += activeWifiOnWindowMs;
   json += F(",\"wifiOffWindowMs\":");
   json += activeWifiOffWindowMs;
+  json += F(",\"oledOnDurationMs\":");
+  json += activeOledIdleTimeoutMs;
   json += F(",\"wateringRunCount\":");
   json += wateringRunCount;
   json += F(",\"cooldownRemainingMs\":");
@@ -1599,6 +1758,8 @@ void connectNetwork() {
     wifiSleeping = false;
     wifiWasConnected = true;
     wifiModeChangedAt = millis();
+    serverSyncSucceededThisWifiSession = !serverSyncConfigured();
+    nextServerSyncRetryAt = wifiModeChangedAt;
     systemMessage = "Controller ready";
     Serial.printf("[WIFI] Connected, IP=%s\n",
                   WiFi.localIP().toString().c_str());
@@ -1609,6 +1770,20 @@ void connectNetwork() {
     }
     configTime(TIMEZONE, NTP_SERVER_1, NTP_SERVER_2);
     Serial.println(F("[TIME] NTP synchronization started"));
+    return;
+  }
+
+  if (serverSyncConfigured()) {
+    apMode = false;
+    wifiSleeping = false;
+    wifiWasConnected = false;
+    wifiModeChangedAt = millis();
+    serverSyncSucceededThisWifiSession = false;
+    nextWifiConnectRetryAt = wifiModeChangedAt + randomRetryDelayMs();
+    nextServerSyncRetryAt = wifiModeChangedAt;
+    systemMessage = "Wi-Fi retrying for server";
+    Serial.println(F("[WIFI] Initial connection failed; keeping station mode for server retry"));
+    showStartupMessage(F("Wi-Fi retrying"), F("Waiting server"));
     return;
   }
 
@@ -1634,8 +1809,8 @@ void updateDisplay(uint32_t now) {
   if (pumpRunning || otaInProgress || otaRebootPending) {
     wakeDisplay(now);
   }
-  if (displayOn && intervalElapsed(now, lastOledActivityAt,
-                                   OLED_IDLE_TIMEOUT_MS)) {
+  if (displayOn && activeOledIdleTimeoutMs > 0 &&
+      intervalElapsed(now, lastOledActivityAt, activeOledIdleTimeoutMs)) {
     sleepDisplay();
     return;
   }
@@ -1646,6 +1821,10 @@ void updateDisplay(uint32_t now) {
   display.clearDisplay();
   display.setCursor(0, 0);
   display.println(formattedOledDateTime());
+  display.print(F("FW "));
+  display.print(FIRMWARE_VERSION);
+  display.print(F(" Sync "));
+  display.println(formattedServerSyncAge(now));
   display.print(F("IP: "));
   display.println(currentIp());
 
@@ -1756,6 +1935,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println();
   Serial.println(F("[BOOT] ESP8266 plant watering controller"));
+  randomSeed(ESP.getCycleCount() ^ ESP.getChipId() ^ micros());
   wokeFromDeepSleep = ESP.getResetReason().indexOf(F("Deep-Sleep")) >= 0;
   loadRtcState();
   loadPersistentState();
@@ -1834,6 +2014,12 @@ void loop() {
   }
   if (!wifiSleeping && !apMode && WiFi.status() == WL_CONNECTED) {
     MDNS.update();
+  }
+
+  if (serverSyncConfigured() && !serverSyncSucceededThisWifiSession &&
+      !wifiSleeping && !apMode && WiFi.status() == WL_CONNECTED &&
+      deadlineReached(now, nextServerSyncRetryAt)) {
+    serverSyncDue = true;
   }
 
   const bool forceServerSync = serverSyncDue && serverSyncConfigured() &&

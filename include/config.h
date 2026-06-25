@@ -30,6 +30,12 @@ constexpr char HOSTNAME[] = "plant-water";
 #ifndef SERVER_HTTP_TIMEOUT_MS
 #define SERVER_HTTP_TIMEOUT_MS 8000
 #endif
+#ifndef SERVER_SYNC_RETRY_MIN_MS
+#define SERVER_SYNC_RETRY_MIN_MS (15UL * 1000UL)
+#endif
+#ifndef SERVER_SYNC_RETRY_MAX_MS
+#define SERVER_SYNC_RETRY_MAX_MS (60UL * 1000UL)
+#endif
 
 // NTP and local timezone. This default observes US Eastern EST/EDT.
 constexpr char TIMEZONE[] = "EST5EDT,M3.2.0,M11.1.0";
@@ -97,7 +103,8 @@ constexpr uint32_t SENSORLESS_WATERING_INTERVAL_MS =
 // Update rates.
 constexpr uint32_t SENSOR_INTERVAL_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t DISPLAY_INTERVAL_MS = 250;
-constexpr uint32_t OLED_IDLE_TIMEOUT_MS = 60UL * 1000UL;
+// 0 keeps the OLED on. Server config can override this with oledOnDurationMs.
+constexpr uint32_t OLED_IDLE_TIMEOUT_MS = 0;
 constexpr uint32_t PERSISTENT_STATE_SAVE_INTERVAL_MS = 60UL * 1000UL;
 constexpr uint32_t SERIAL_INTERVAL_MS = 5000;
 
